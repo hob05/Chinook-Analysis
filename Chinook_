@@ -1,0 +1,181 @@
+##### PACKAGE INSTALLATION #####
+
+library(tidyverse) # for plotting, reshaping data, data manipulation
+library(RSQLite) # for reading chinook.db and running SQL queries
+library(stats) # for cor.test
+
+
+                                                  ##### READING THE DATABASE #####
+
+db <- dbConnect(dbDriver("SQLite"), dbname = "chinook.db") # reading chinook.db
+
+
+                                              ##### MAKING THE AVREAGES TABLE #####
+
+avgs_table <- dbGetQuery(db,"with album_stats as (
+  select 
+  AlbumId,
+  GenreId,
+  sum(UnitPrice) as Cost_of_Album,
+  sum(Milliseconds) / 60000 as Length_of_Album,
+  sum(Bytes) / 1000000 as Size_of_Album
+  from tracks
+  group by AlbumId, GenreId
+),
+genre_averages as (
+  select 
+  GenreId,
+  round(avg(Cost_of_Album), 2) as 'Average Cost of an Album (£)',
+  round(avg(Length_of_Album), 2) as 'Average Length of an Album (min)',
+  round(avg(Size_of_Album), 2) as 'Average Size of an Album (mb)'
+  from album_stats
+  group by GenreId
+)
+select 
+g.GenreId as 'Genre Id', 
+g.Name,
+ga.'Average Cost of an Album (£)', 
+ga.'Average Length of an Album (min)', 
+ga.'Average Size of an Album (mb)'
+from genres g
+inner join genre_averages ga 
+on g.GenreId = ga.GenreId
+order by g.GenreId;")
+
+
+View(avgs_table)
+
+                        ##### PLOTTING THE AVERAGES TABLE (ALL METRICS, NO OMITTED VALUES) #####
+
+
+avgs_table_long <- avgs_table %>%
+  pivot_longer(cols = c(`Average Cost of an Album (£)`, `Average Length of an Album (min)`, `Average Size of an Album (mb)`),
+               names_to = "Metric",
+               values_to = "Value")
+
+
+ggplot(data = avgs_table_long, mapping = aes(x = Name, y = Value, fill = Metric)) +
+  geom_col(position = position_dodge(), color = "black") +
+  coord_flip() +
+  labs(x = "Genre", y = "Value", fill = "Metric") +
+  scale_fill_manual(values = c("red", "blue", "purple"))
+
+View(avgs_table_long)
+
+
+                      ##### PLOTTING THE AVERAGES TABLE (ALL METRICS, OUTLIERS OMITTED) ######
+
+avg_no_outliers <- dbGetQuery(db,"with album_stats as (
+  select 
+  AlbumId,
+  GenreId,
+  sum(UnitPrice) as Cost_of_Album,
+  sum(Milliseconds) / 60000 as Length_of_Album,
+  sum(Bytes) / 1000000 as Size_of_Album
+  from tracks
+  where GenreId not in (18, 19, 20, 21, 22, 24, 25)
+  group by AlbumId, GenreId
+),
+genre_averages as (
+  select 
+  GenreId,
+  round(avg(Cost_of_Album), 2) as 'Average Cost of an Album (£)',
+  round(avg(Length_of_Album), 2) as 'Average Length of an Album (min)',
+  round(avg(Size_of_Album), 2) as 'Average Size of an Album (mb)'
+  from album_stats
+  group by GenreId
+)
+select 
+g.GenreId, 
+g.Name,
+ga.'Average Cost of an Album (£)', 
+ga.'Average Length of an Album (min)', 
+ga.'Average Size of an Album (mb)'
+from genres g
+inner join genre_averages ga 
+on g.GenreId = ga.GenreId
+order by g.GenreId;")
+
+
+avg_no_outliers_long <- avg_no_outliers %>%
+  pivot_longer(cols = c(`Average Cost of an Album (£)`, `Average Length of an Album (min)`, `Average Size of an Album (mb)`),
+               names_to = "Metric",
+               values_to = "Value")
+
+ggplot(data = avg_no_outliers_long, mapping = aes(x = Name, y = Value, fill = Metric)) +
+  geom_col(position = position_dodge(), color = "black") +
+  coord_flip() +
+  labs(x = "Genre", y = "Value", fill = "Metric") +
+  scale_fill_manual(values = c("red", "blue", "purple"))
+
+
+                                                ##### AVG COST + AVG LENGTH #####
+cost_length_long <- avg_no_outliers %>%
+  pivot_longer(cols = c(`Average Cost of an Album (£)`, `Average Length of an Album (min)`),
+               names_to = "Metric",
+               values_to = "Value")
+
+ggplot(data = cost_length_long, mapping = aes(x = Name, y = Value, fill = Metric)) +
+  geom_col(position = position_dodge(), color = "black") +
+  coord_flip() +
+  labs(x = "Genre", y = "Value", fill = "Metric") +
+  scale_fill_manual(values = c("red", "blue"))
+
+
+                                              ##### AVG LENGTH + AVG SIZE #####
+length_size_long <- avg_no_outliers %>%
+  pivot_longer(cols = c(`Average Length of an Album (min)`, `Average Size of an Album (mb)`),
+               names_to = "Metric",
+               values_to = "Value")
+
+ggplot(data = length_size_long, mapping = aes(x = Name, y = Value, fill = Metric)) +
+  geom_col(position = position_dodge(), color = "black") +
+  coord_flip() +
+  labs(x = "Genre", y = "Value", fill = "Metric") +
+  scale_fill_manual(values = c("blue", "purple"))
+
+
+                                            ##### AVG COST + AVG SIZE #####
+cost_size_long <- avg_no_outliers %>%
+  pivot_longer(cols = c(`Average Cost of an Album (£)`, `Average Size of an Album (mb)`),
+               names_to = "Metric",
+               values_to = "Value")
+
+ggplot(data = cost_size_long, mapping = aes(x = Name, y = Value, fill = Metric)) +
+  geom_col(position = position_dodge(), color = "black") +
+  coord_flip() +
+  labs(x = "Genre", y = "Value", fill = "Metric") +
+  scale_fill_manual(values = c("red", "purple"))
+
+
+                                                ##### CORRELATIONS ##### 
+
+                                      
+c_l_table <- select(avg_no_outliers, -'Average Size of an Album (mb)') # cost & length
+c_s_table <- select(avg_no_outliers, -'Average Length of an Album (min)') # cost & size
+l_s_table <- select(avg_no_outliers, -'Average Cost of an Album (£)') # length & size
+
+---------- 
+
+c_l_table %>%
+  with(shapiro.test(`Average Cost of an Album (£)`)) # Shapiro-Wilks for cost
+
+c_l_table %>%
+  with(shapiro.test(`Average Length of an Album (min)`)) # Shapiro-Wilks for length
+
+c_s_table %>%
+  with(shapiro.test(`Average Size of an Album (mb)`)) # Shapiro-Wilks for size
+
+----------
+
+# Correlation of cost & length #
+c_l_table %>%
+  with(cor.test(`Average Cost of an Album (£)`, `Average Length of an Album (min)`, method = "spearman"))
+
+# Correlation of cost & size #
+c_s_table %>%
+  with(cor.test(`Average Cost of an Album (£)`, `Average Size of an Album (mb)`, method = "spearman"))
+
+# Correlation of length & size #  
+l_s_table %>%
+  with(cor.test(`Average Length of an Album (min)`, `Average Size of an Album (mb)`, method = "pearson"))
